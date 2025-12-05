@@ -1,0 +1,197 @@
+Here are the specific sections to update:
+
+---
+
+## File: impound_lifecycle_query.py
+
+### Change 1: Add valid_first_day_n11 (in FINAL OUTPUT section, after the milestone dates)
+
+**Add after the line `md.first_day_n12,`:**
+
+```sql
+    -- Valid N11 (impound-related assignment)
+    CASE 
+        WHEN md.first_day_n11 IS NULL THEN NULL
+        WHEN md.first_day_n56 IS NULL THEN NULL
+        WHEN md.first_day_n11 = md.first_day_n56 THEN md.first_day_n11
+        WHEN md.first_day_n11 < md.first_day_n56 THEN md.first_day_n56
+        ELSE md.first_day_n11
+    END AS valid_first_day_n11,
+```
+
+---
+
+### Change 2: Add valid_total_days_in_n11 (in code_durations CTE)
+
+**Add after `SUM(CASE WHEN ds.has_n11 = 1 ...` block:**
+
+```sql
+        SUM(CASE WHEN ds.has_n11 = 1 
+                      AND ds.status_date >= ib.first_day_impound
+                      AND (ds.status_date <= ib.last_day_impound_raw OR ib.is_still_open = 1)
+                      AND md.first_day_n56 IS NOT NULL
+                      AND ds.status_date >= md.first_day_n56
+                 THEN 1 ELSE 0 END) AS valid_total_days_in_n11,
+```
+
+**Note:** This requires joining milestone_dates (md) to code_durations. See Change 2b below.
+
+---
+
+### Change 2b: Update code_durations CTE to join milestone_dates
+
+**Find:**
+```sql
+code_durations AS (
+    SELECT 
+        ib.loan_sid, 
+        ib.impound_instance_num,
+```
+
+**Replace with:**
+```sql
+code_durations AS (
+    SELECT 
+        ib.loan_sid, 
+        ib.impound_instance_num,
+        md.first_day_n56,
+```
+
+**And update the FROM/JOIN at the end of code_durations:**
+
+**Find:**
+```sql
+    FROM instance_base ib
+    LEFT JOIN daily_status ds ON ib.loan_sid = ds.loan_sid
+    GROUP BY ib.loan_sid, ib.impound_instance_num
+),
+```
+
+**Replace with:**
+```sql
+    FROM instance_base ib
+    LEFT JOIN milestone_dates md 
+        ON ib.loan_sid = md.loan_sid AND ib.impound_instance_num = md.impound_instance_num
+    LEFT JOIN daily_status ds ON ib.loan_sid = ds.loan_sid
+    GROUP BY ib.loan_sid, ib.impound_instance_num, md.first_day_n56
+),
+```
+
+---
+
+### Change 3: Add valid time metrics (in FINAL OUTPUT, after days_n11_to_n12)
+
+**Add after the line `md.first_day_n12 - md.first_day_n11 AS days_n11_to_n12,`:**
+
+```sql
+    -- Valid time metrics (using valid_first_day_n11)
+    CASE 
+        WHEN md.first_day_n11 IS NULL THEN NULL
+        WHEN md.first_day_n56 IS NULL THEN NULL
+        WHEN md.first_day_n11 < md.first_day_n56 THEN md.first_day_n56 - ib.first_day_impound
+        ELSE md.first_day_n11 - ib.first_day_impound
+    END AS valid_days_to_n11,
+    
+    CASE 
+        WHEN md.first_day_n11 IS NULL THEN NULL
+        WHEN md.first_day_n56 IS NULL THEN NULL
+        WHEN md.first_day_n11 < md.first_day_n56 THEN 0
+        ELSE md.first_day_n11 - md.first_day_n56
+    END AS valid_days_n56_to_n11,
+```
+
+---
+
+### Change 4: Update outcome_type (in FINAL OUTPUT)
+
+**Find:**
+```sql
+    -- Outcome classification
+    CASE 
+        WHEN ib.is_still_open = 1 THEN 'still_open'
+        WHEN md.first_day_n12 IS NOT NULL THEN 'recovered'
+        WHEN md.first_day_n11 IS NOT NULL AND md.first_day_n12 IS NULL THEN 'assigned_for_repo(n11)_recovered_by_third_party'
+        WHEN md.first_day_n53 IS NOT NULL AND md.first_day_n11 IS NULL THEN 'closed_pre_assignment'
+        ELSE 'closed_no_assignment'
+    END AS outcome_type
+```
+
+**Replace with:**
+```sql
+    -- Outcome classification (uses valid_first_day_n11 logic inline)
+    CASE 
+        WHEN ib.is_still_open = 1 THEN 'still_open'
+        WHEN md.first_day_n12 IS NOT NULL THEN 'recovered'
+        WHEN md.first_day_n56 IS NOT NULL AND md.first_day_n11 IS NOT NULL THEN 'assigned_for_repo(n11)_recovered_by_third_party'
+        WHEN md.first_day_n53 IS NOT NULL THEN 'closed_pre_assignment'
+        ELSE 'closed_no_assignment'
+    END AS outcome_type
+```
+
+---
+
+## File: impound_charts_and_export.py
+
+### Change 5: Fix y-axis for negative values (in create_bar_chart_with_averages function)
+
+**Find (around lines 173-180):**
+```python
+    # Y-axis buffer
+    max_val = df_sorted[y_col].max() if len(df_sorted) > 0 else 0
+    if pd.isna(max_val):
+        max_val = 0
+    upper_buffer = max_val * 0.20 if max_val > 0 else 2
+    ax.set_ylim(0, max_val + upper_buffer)
+```
+
+**Replace with:**
+```python
+    # Y-axis buffer (handle negative values)
+    max_val = df_sorted[y_col].max() if len(df_sorted) > 0 else 0
+    min_val = df_sorted[y_col].min() if len(df_sorted) > 0 else 0
+    if pd.isna(max_val):
+        max_val = 0
+    if pd.isna(min_val):
+        min_val = 0
+    upper_buffer = max_val * 0.20 if max_val > 0 else 2
+    lower_buffer = abs(min_val) * 0.20 if min_val < 0 else 0
+    ax.set_ylim(min_val - lower_buffer, max_val + upper_buffer)
+```
+
+---
+
+### Change 6: Fix averages to exclude current month (in create_bar_chart_with_averages function)
+
+**Find (around lines 120-125):**
+```python
+    # Compute rolling averages
+    avg_12 = df_sorted[y_col].rolling(window=12, min_periods=1).mean()
+    avg_6 = df_sorted[y_col].rolling(window=6, min_periods=1).mean()
+    avg_3 = df_sorted[y_col].rolling(window=3, min_periods=1).mean()
+```
+
+**Replace with:**
+```python
+    # Compute averages (excluding current month)
+    df_excluding_current = df_sorted[y_col].iloc[:-1] if len(df_sorted) > 1 else df_sorted[y_col]
+    avg_12_val = df_excluding_current.tail(12).mean() if len(df_excluding_current) >= 1 else 0
+    avg_6_val = df_excluding_current.tail(6).mean() if len(df_excluding_current) >= 1 else 0
+    avg_3_val = df_excluding_current.tail(3).mean() if len(df_excluding_current) >= 1 else 0
+```
+
+**And find (around lines 155-157):**
+```python
+    # Add average lines
+    ax.axhline(y=avg_12.iloc[-1], color=COLOR_AVG_12, linestyle='--', linewidth=2, label=f'12-Month Avg: {avg_12.iloc[-1]:.1f}')
+    ax.axhline(y=avg_6.iloc[-1], color=COLOR_AVG_6, linestyle='--', linewidth=2, label=f'6-Month Avg: {avg_6.iloc[-1]:.1f}')
+    ax.axhline(y=avg_3.iloc[-1], color=COLOR_AVG_3, linestyle='--', linewidth=2, label=f'3-Month Avg: {avg_3.iloc[-1]:.1f}')
+```
+
+**Replace with:**
+```python
+    # Add average lines (excluding current month)
+    ax.axhline(y=avg_12_val, color=COLOR_AVG_12, linestyle='--', linewidth=2, label=f'12-Month Avg: {avg_12_val:.1f}')
+    ax.axhline(y=avg_6_val, color=COLOR_AVG_6, linestyle='--', linewidth=2, label=f'6-Month Avg: {avg_6_val:.1f}')
+    ax.axhline(y=avg_3_val, color=COLOR_AVG_3, linestyle='--', linewidth=2, label=f'3-Month Avg: {avg_3_val:.1f}')
+```
+
