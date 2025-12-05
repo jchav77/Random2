@@ -1,14 +1,52 @@
-Here are the specific sections to update:
+Yes, we are keeping the old versions for visibility. Here's each change with more context:
 
 ---
 
-## File: impound_lifecycle_query.py
+## Confirmation: Old vs New Fields
 
-### Change 1: Add valid_first_day_n11 (in FINAL OUTPUT section, after the milestone dates)
+| Old Field (Keeping) | New Field (Adding) |
+|---------------------|-------------------|
+| first_day_n11 | valid_first_day_n11 |
+| total_days_in_n11 | valid_total_days_in_n11 |
+| days_to_n11 | valid_days_to_n11 |
+| days_n56_to_n11 | valid_days_n56_to_n11 |
 
-**Add after the line `md.first_day_n12,`:**
+The old fields stay for visibility/investigation. The new valid_ fields are used for accurate metrics and outcome classification.
 
+---
+
+## Change 1: Add valid_first_day_n11
+
+**Look for this section in FINAL OUTPUT (around line 380):**
 ```sql
+    -- Milestone first occurrence dates
+    md.first_day_n53,
+    md.first_day_n54,
+    md.first_day_n55,
+    md.first_day_n56,
+    md.first_day_n57,
+    md.first_day_n58,
+    md.first_day_n60,
+    md.first_day_n11,
+    md.first_day_n12,
+    
+    -- Total days in each status
+    cd.total_days_in_n53,
+```
+
+**Insert the new field between `md.first_day_n12,` and `-- Total days in each status`:**
+```sql
+    -- Milestone first occurrence dates
+    md.first_day_n53,
+    md.first_day_n54,
+    md.first_day_n55,
+    md.first_day_n56,
+    md.first_day_n57,
+    md.first_day_n58,
+    md.first_day_n60,
+    md.first_day_n11,
+    md.first_day_n12,
+    
     -- Valid N11 (impound-related assignment)
     CASE 
         WHEN md.first_day_n11 IS NULL THEN NULL
@@ -17,58 +55,98 @@ Here are the specific sections to update:
         WHEN md.first_day_n11 < md.first_day_n56 THEN md.first_day_n56
         ELSE md.first_day_n11
     END AS valid_first_day_n11,
+    
+    -- Total days in each status
+    cd.total_days_in_n53,
 ```
 
 ---
 
-### Change 2: Add valid_total_days_in_n11 (in code_durations CTE)
+## Change 2: Add valid_total_days_in_n11
 
-**Add after `SUM(CASE WHEN ds.has_n11 = 1 ...` block:**
+This one is more complex because we need to modify the code_durations CTE.
 
+**Look for the code_durations CTE (around line 270):**
 ```sql
+-- =============================================================================
+-- CODE DURATIONS: Total days spent in each status
+-- =============================================================================
+code_durations AS (
+    SELECT 
+        ib.loan_sid, 
+        ib.impound_instance_num,
+        
+        -- Count of days each code was present within impound window
+        SUM(CASE WHEN ds.has_n53 = 1 
+                      AND ds.status_date >= ib.first_day_impound
+                      AND (ds.status_date <= ib.last_day_impound_raw OR ib.is_still_open = 1)
+                 THEN 1 ELSE 0 END) AS total_days_in_n53,
+```
+
+**Replace the entire code_durations CTE with this version:**
+```sql
+-- =============================================================================
+-- CODE DURATIONS: Total days spent in each status
+-- =============================================================================
+code_durations AS (
+    SELECT 
+        ib.loan_sid, 
+        ib.impound_instance_num,
+        
+        -- Count of days each code was present within impound window
+        SUM(CASE WHEN ds.has_n53 = 1 
+                      AND ds.status_date >= ib.first_day_impound
+                      AND (ds.status_date <= ib.last_day_impound_raw OR ib.is_still_open = 1)
+                 THEN 1 ELSE 0 END) AS total_days_in_n53,
+        
+        SUM(CASE WHEN ds.has_n54 = 1 
+                      AND ds.status_date >= ib.first_day_impound
+                      AND (ds.status_date <= ib.last_day_impound_raw OR ib.is_still_open = 1)
+                 THEN 1 ELSE 0 END) AS total_days_in_n54,
+        
+        SUM(CASE WHEN ds.has_n55 = 1 
+                      AND ds.status_date >= ib.first_day_impound
+                      AND (ds.status_date <= ib.last_day_impound_raw OR ib.is_still_open = 1)
+                 THEN 1 ELSE 0 END) AS total_days_in_n55,
+        
+        SUM(CASE WHEN ds.has_n56 = 1 
+                      AND ds.status_date >= ib.first_day_impound
+                      AND (ds.status_date <= ib.last_day_impound_raw OR ib.is_still_open = 1)
+                 THEN 1 ELSE 0 END) AS total_days_in_n56,
+        
+        SUM(CASE WHEN ds.has_n57 = 1 
+                      AND ds.status_date >= ib.first_day_impound
+                      AND (ds.status_date <= ib.last_day_impound_raw OR ib.is_still_open = 1)
+                 THEN 1 ELSE 0 END) AS total_days_in_n57,
+        
+        SUM(CASE WHEN ds.has_n58 = 1 
+                      AND ds.status_date >= ib.first_day_impound
+                      AND (ds.status_date <= ib.last_day_impound_raw OR ib.is_still_open = 1)
+                 THEN 1 ELSE 0 END) AS total_days_in_n58,
+        
+        SUM(CASE WHEN ds.has_n60 = 1 
+                      AND ds.status_date >= ib.first_day_impound
+                      AND (ds.status_date <= ib.last_day_impound_raw OR ib.is_still_open = 1)
+                 THEN 1 ELSE 0 END) AS total_days_in_n60,
+        
+        SUM(CASE WHEN ds.has_n11 = 1 
+                      AND ds.status_date >= ib.first_day_impound
+                      AND (ds.status_date <= ib.last_day_impound_raw OR ib.is_still_open = 1)
+                 THEN 1 ELSE 0 END) AS total_days_in_n11,
+        
+        -- Valid total days in N11 (only from N56 onwards)
         SUM(CASE WHEN ds.has_n11 = 1 
                       AND ds.status_date >= ib.first_day_impound
                       AND (ds.status_date <= ib.last_day_impound_raw OR ib.is_still_open = 1)
                       AND md.first_day_n56 IS NOT NULL
                       AND ds.status_date >= md.first_day_n56
                  THEN 1 ELSE 0 END) AS valid_total_days_in_n11,
-```
-
-**Note:** This requires joining milestone_dates (md) to code_durations. See Change 2b below.
-
----
-
-### Change 2b: Update code_durations CTE to join milestone_dates
-
-**Find:**
-```sql
-code_durations AS (
-    SELECT 
-        ib.loan_sid, 
-        ib.impound_instance_num,
-```
-
-**Replace with:**
-```sql
-code_durations AS (
-    SELECT 
-        ib.loan_sid, 
-        ib.impound_instance_num,
-        md.first_day_n56,
-```
-
-**And update the FROM/JOIN at the end of code_durations:**
-
-**Find:**
-```sql
-    FROM instance_base ib
-    LEFT JOIN daily_status ds ON ib.loan_sid = ds.loan_sid
-    GROUP BY ib.loan_sid, ib.impound_instance_num
-),
-```
-
-**Replace with:**
-```sql
+        
+        SUM(CASE WHEN ds.has_n12 = 1 
+                      AND ds.status_date >= ib.first_day_impound
+                      AND (ds.status_date <= ib.last_day_impound_raw OR ib.is_still_open = 1)
+                 THEN 1 ELSE 0 END) AS total_days_in_n12
+                 
     FROM instance_base ib
     LEFT JOIN milestone_dates md 
         ON ib.loan_sid = md.loan_sid AND ib.impound_instance_num = md.impound_instance_num
@@ -77,14 +155,70 @@ code_durations AS (
 ),
 ```
 
+**Key changes in this CTE:**
+- Added `valid_total_days_in_n11` between `total_days_in_n11` and `total_days_in_n12`
+- Added join to `milestone_dates md`
+- Updated GROUP BY to include `md.first_day_n56`
+
 ---
 
-### Change 3: Add valid time metrics (in FINAL OUTPUT, after days_n11_to_n12)
+## Change 3: Add valid_total_days_in_n11 to FINAL OUTPUT
 
-**Add after the line `md.first_day_n12 - md.first_day_n11 AS days_n11_to_n12,`:**
-
+**Look for this section (around line 395):**
 ```sql
-    -- Valid time metrics (using valid_first_day_n11)
+    -- Total days in each status
+    cd.total_days_in_n53,
+    cd.total_days_in_n54,
+    cd.total_days_in_n55,
+    cd.total_days_in_n56,
+    cd.total_days_in_n57,
+    cd.total_days_in_n58,
+    cd.total_days_in_n60,
+    cd.total_days_in_n11,
+    cd.total_days_in_n12,
+    
+    -- Milestone flags (Y/N)
+```
+
+**Insert the new field between `cd.total_days_in_n11,` and `cd.total_days_in_n12,`:**
+```sql
+    -- Total days in each status
+    cd.total_days_in_n53,
+    cd.total_days_in_n54,
+    cd.total_days_in_n55,
+    cd.total_days_in_n56,
+    cd.total_days_in_n57,
+    cd.total_days_in_n58,
+    cd.total_days_in_n60,
+    cd.total_days_in_n11,
+    cd.valid_total_days_in_n11,
+    cd.total_days_in_n12,
+    
+    -- Milestone flags (Y/N)
+```
+
+---
+
+## Change 4: Add valid time metrics to FINAL OUTPUT
+
+**Look for this section (around line 425):**
+```sql
+    -- Stage-to-stage durations
+    md.first_day_n56 - md.first_day_n53 AS days_n53_to_n56,
+    md.first_day_n11 - md.first_day_n56 AS days_n56_to_n11,
+    md.first_day_n12 - md.first_day_n11 AS days_n11_to_n12,
+    
+    -- Data validation flags (sequence violations)
+```
+
+**Insert the new fields between `days_n11_to_n12,` and `-- Data validation flags`:**
+```sql
+    -- Stage-to-stage durations
+    md.first_day_n56 - md.first_day_n53 AS days_n53_to_n56,
+    md.first_day_n11 - md.first_day_n56 AS days_n56_to_n11,
+    md.first_day_n12 - md.first_day_n11 AS days_n11_to_n12,
+    
+    -- Valid time metrics (using valid_first_day_n11 logic)
     CASE 
         WHEN md.first_day_n11 IS NULL THEN NULL
         WHEN md.first_day_n56 IS NULL THEN NULL
@@ -98,13 +232,15 @@ code_durations AS (
         WHEN md.first_day_n11 < md.first_day_n56 THEN 0
         ELSE md.first_day_n11 - md.first_day_n56
     END AS valid_days_n56_to_n11,
+    
+    -- Data validation flags (sequence violations)
 ```
 
 ---
 
-### Change 4: Update outcome_type (in FINAL OUTPUT)
+## Change 5: Update outcome_type
 
-**Find:**
+**Look for this section (around line 445):**
 ```sql
     -- Outcome classification
     CASE 
@@ -114,11 +250,13 @@ code_durations AS (
         WHEN md.first_day_n53 IS NOT NULL AND md.first_day_n11 IS NULL THEN 'closed_pre_assignment'
         ELSE 'closed_no_assignment'
     END AS outcome_type
+
+FROM instance_base ib
 ```
 
-**Replace with:**
+**Replace the outcome_type CASE statement with:**
 ```sql
-    -- Outcome classification (uses valid_first_day_n11 logic inline)
+    -- Outcome classification (uses valid_first_day_n11 logic)
     CASE 
         WHEN ib.is_still_open = 1 THEN 'still_open'
         WHEN md.first_day_n12 IS NOT NULL THEN 'recovered'
@@ -126,15 +264,17 @@ code_durations AS (
         WHEN md.first_day_n53 IS NOT NULL THEN 'closed_pre_assignment'
         ELSE 'closed_no_assignment'
     END AS outcome_type
+
+FROM instance_base ib
 ```
 
 ---
 
-## File: impound_charts_and_export.py
+## Changes to impound_charts_and_export.py
 
-### Change 5: Fix y-axis for negative values (in create_bar_chart_with_averages function)
+### Change 6: Fix y-axis for negative values
 
-**Find (around lines 173-180):**
+**Look for this section (around line 173):**
 ```python
     # Y-axis buffer
     max_val = df_sorted[y_col].max() if len(df_sorted) > 0 else 0
@@ -142,6 +282,8 @@ code_durations AS (
         max_val = 0
     upper_buffer = max_val * 0.20 if max_val > 0 else 2
     ax.set_ylim(0, max_val + upper_buffer)
+    
+    # Add legend
 ```
 
 **Replace with:**
@@ -156,18 +298,22 @@ code_durations AS (
     upper_buffer = max_val * 0.20 if max_val > 0 else 2
     lower_buffer = abs(min_val) * 0.20 if min_val < 0 else 0
     ax.set_ylim(min_val - lower_buffer, max_val + upper_buffer)
+    
+    # Add legend
 ```
 
 ---
 
-### Change 6: Fix averages to exclude current month (in create_bar_chart_with_averages function)
+### Change 7: Fix averages to exclude current month
 
-**Find (around lines 120-125):**
+**Look for this section (around line 120):**
 ```python
     # Compute rolling averages
     avg_12 = df_sorted[y_col].rolling(window=12, min_periods=1).mean()
     avg_6 = df_sorted[y_col].rolling(window=6, min_periods=1).mean()
     avg_3 = df_sorted[y_col].rolling(window=3, min_periods=1).mean()
+    
+    # Create figure
 ```
 
 **Replace with:**
@@ -177,14 +323,18 @@ code_durations AS (
     avg_12_val = df_excluding_current.tail(12).mean() if len(df_excluding_current) >= 1 else 0
     avg_6_val = df_excluding_current.tail(6).mean() if len(df_excluding_current) >= 1 else 0
     avg_3_val = df_excluding_current.tail(3).mean() if len(df_excluding_current) >= 1 else 0
+    
+    # Create figure
 ```
 
-**And find (around lines 155-157):**
+**And look for this section (around line 155):**
 ```python
     # Add average lines
     ax.axhline(y=avg_12.iloc[-1], color=COLOR_AVG_12, linestyle='--', linewidth=2, label=f'12-Month Avg: {avg_12.iloc[-1]:.1f}')
     ax.axhline(y=avg_6.iloc[-1], color=COLOR_AVG_6, linestyle='--', linewidth=2, label=f'6-Month Avg: {avg_6.iloc[-1]:.1f}')
     ax.axhline(y=avg_3.iloc[-1], color=COLOR_AVG_3, linestyle='--', linewidth=2, label=f'3-Month Avg: {avg_3.iloc[-1]:.1f}')
+    
+    # Set axis labels and title
 ```
 
 **Replace with:**
@@ -193,5 +343,8 @@ code_durations AS (
     ax.axhline(y=avg_12_val, color=COLOR_AVG_12, linestyle='--', linewidth=2, label=f'12-Month Avg: {avg_12_val:.1f}')
     ax.axhline(y=avg_6_val, color=COLOR_AVG_6, linestyle='--', linewidth=2, label=f'6-Month Avg: {avg_6_val:.1f}')
     ax.axhline(y=avg_3_val, color=COLOR_AVG_3, linestyle='--', linewidth=2, label=f'3-Month Avg: {avg_3_val:.1f}')
+    
+    # Set axis labels and title
 ```
 
+---
