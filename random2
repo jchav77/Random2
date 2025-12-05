@@ -1,74 +1,605 @@
+# =============================================================================
+# COLOR SCHEME
+# =============================================================================
 
-## Clarification on Outcome Distribution Chart
+# Bar colors
+COLOR_CURRENT_MONTH = (215/255, 30/255, 40/255)      # Red for current month
+COLOR_NON_CURRENT = (244/255, 240/255, 237/255)      # Light grey for other months
 
-The data label on top of each stacked bar shows the **total number of instances that started that month** (sum of all outcome categories). It includes all outcomes: still_open, recovered, assigned_for_repo, closed_pre_assignment, and closed_no_assignment.
+# Average line colors
+COLOR_AVG_12 = (90/255, 70/255, 155/255)             # Purple for 12-month avg
+COLOR_AVG_6 = (130/255, 50/255, 145/255)             # Custom for 6-month avg
+COLOR_AVG_3 = (215/255, 30/255, 40/255)              # Red for 3-month avg
 
-For the reference table, we can add a summary table in the Excel tab below the chart data.
+# Stacked bar colors (for outcome/entry code charts)
+STACKED_COLORS = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f']
 
----
+# =============================================================================
+# HELPER FUNCTION: Filter to visual range (last 13 months)
+# =============================================================================
 
-## Clarification on Entry Code Chart
+def filter_to_visual_range(df, month_col='first_impound_month'):
+    """Filter dataframe to last 13 months for charting."""
+    current_month = pd.Period(pd.Timestamp.today(), 'M')
+    cutoff_month = current_month - (VISUAL_MONTHS - 1)
+    
+    df_filtered = df.copy()
+    df_filtered['_period'] = pd.to_datetime(df_filtered[month_col]).dt.to_period('M')
+    df_filtered = df_filtered[df_filtered['_period'] >= cutoff_month]
+    df_filtered = df_filtered.drop(columns=['_period'])
+    
+    return df_filtered
 
-You want a **new separate chart** showing only N50 vs N52 counts per month (excluding N53, N54, N55, etc. that might appear as entry codes). This makes sense for your correlation analysis.
 
----
+# =============================================================================
+# HELPER FUNCTION: Create bar chart with average lines
+# =============================================================================
 
-Here are the changes:
+def create_bar_chart_with_averages(
+    df, 
+    x_col, 
+    y_col, 
+    title, 
+    y_label,
+    figsize=(12, 6),
+    show_count=False,
+    count_col=None
+):
+    """
+    Create a bar chart with 3, 6, and 12-month average lines.
+    Current month is highlighted in red.
+    
+    Parameters:
+    -----------
+    df : DataFrame with data
+    x_col : Column name for x-axis (typically month)
+    y_col : Column name for y-axis (metric)
+    title : Chart title
+    y_label : Y-axis label
+    figsize : Figure size tuple
+    show_count : If True, show count on bar labels
+    count_col : Column name for count (if show_count=True)
+    """
+    
+    # Sort by month
+    df_sorted = df.sort_values(x_col).copy()
+    
+    # Convert month to string for x-axis labels
+    df_sorted['month_str'] = df_sorted[x_col].astype(str)
+    
+    # Identify current month
+    current_month = pd.Period(pd.Timestamp.today(), 'M')
+    
+    # Assign bar colors (red for current month, grey for others)
+    bar_colors = []
+    for m in df_sorted[x_col]:
+        try:
+            if pd.Period(m, 'M') == current_month:
+                bar_colors.append(COLOR_CURRENT_MONTH)
+            else:
+                bar_colors.append(COLOR_NON_CURRENT)
+        except:
+            bar_colors.append(COLOR_NON_CURRENT)
+    
+    # Compute averages (excluding current month)
+    df_excluding_current = df_sorted[y_col].iloc[:-1] if len(df_sorted) > 1 else df_sorted[y_col]
+    avg_12_val = df_excluding_current.tail(12).mean() if len(df_excluding_current) >= 1 else 0
+    avg_6_val = df_excluding_current.tail(6).mean() if len(df_excluding_current) >= 1 else 0
+    avg_3_val = df_excluding_current.tail(3).mean() if len(df_excluding_current) >= 1 else 0
+    
+    # Handle NaN averages
+    if pd.isna(avg_12_val):
+        avg_12_val = 0
+    if pd.isna(avg_6_val):
+        avg_6_val = 0
+    if pd.isna(avg_3_val):
+        avg_3_val = 0
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    # Plot bars
+    x_positions = range(len(df_sorted))
+    bars = ax.bar(
+        x_positions,
+        df_sorted[y_col],
+        color=bar_colors,
+        edgecolor='black',
+        linewidth=0.5
+    )
+    
+    # Add value labels on bars
+    for i, (bar, value) in enumerate(zip(bars, df_sorted[y_col])):
+        if pd.notna(value):
+            if show_count and count_col:
+                count = df_sorted[count_col].iloc[i]
+                label_text = f'{value:.1f}\n(n={int(count)})'
+            else:
+                if value >= 1000:
+                    label_text = f'{int(value):,}'
+                elif value >= 10:
+                    label_text = f'{value:.1f}'
+                else:
+                    label_text = f'{value:.2f}'
+            
+            # Position label above or below bar depending on value
+            if value >= 0:
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    bar.get_height() + 0.5,
+                    label_text,
+                    ha='center', 
+                    va='bottom',
+                    fontsize=8,
+                    color='black'
+                )
+            else:
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    bar.get_height() - 0.5,
+                    label_text,
+                    ha='center', 
+                    va='top',
+                    fontsize=8,
+                    color='black'
+                )
+    
+    # Add average lines (excluding current month)
+    ax.axhline(y=avg_12_val, color=COLOR_AVG_12, linestyle='--', linewidth=2, label=f'12-Month Avg: {avg_12_val:.1f}')
+    ax.axhline(y=avg_6_val, color=COLOR_AVG_6, linestyle='--', linewidth=2, label=f'6-Month Avg: {avg_6_val:.1f}')
+    ax.axhline(y=avg_3_val, color=COLOR_AVG_3, linestyle='--', linewidth=2, label=f'3-Month Avg: {avg_3_val:.1f}')
+    
+    # Set axis labels and title
+    ax.set_ylabel(y_label)
+    ax.set_xlabel('Month')
+    ax.set_title(title, fontsize=14, fontweight='bold', pad=12)
+    
+    # Set x-axis ticks
+    ax.set_xticks(x_positions)
+    ax.set_xticklabels(df_sorted['month_str'], rotation=45, ha='right')
+    
+    # Y-axis buffer (handle negative values)
+    max_val = df_sorted[y_col].max() if len(df_sorted) > 0 else 0
+    min_val = df_sorted[y_col].min() if len(df_sorted) > 0 else 0
+    if pd.isna(max_val):
+        max_val = 0
+    if pd.isna(min_val):
+        min_val = 0
+    upper_buffer = max_val * 0.20 if max_val > 0 else 2
+    lower_buffer = abs(min_val) * 0.20 if min_val < 0 else 0
+    ax.set_ylim(min_val - lower_buffer, max_val + upper_buffer)
+    
+    # Add legend
+    ax.legend(loc='upper left', fontsize=9)
+    
+    # Tight layout
+    fig.tight_layout()
+    
+    return fig
 
----
 
-## Change 8: Add N50 vs N52 chart data preparation (impound_charts_and_export.py)
+# =============================================================================
+# HELPER FUNCTION: Create stacked bar chart
+# =============================================================================
 
-**BEFORE (keep this):**
-```python
+def create_stacked_bar_chart(
+    df,
+    x_col,
+    value_cols,
+    title,
+    y_label,
+    figsize=(14, 7),
+    legend_title=None
+):
+    """
+    Create a stacked bar chart for distribution over time.
+    
+    Parameters:
+    -----------
+    df : DataFrame with data
+    x_col : Column name for x-axis (typically month)
+    value_cols : List of column names to stack
+    title : Chart title
+    y_label : Y-axis label
+    legend_title : Title for the legend
+    """
+    
+    # Sort by month
+    df_sorted = df.sort_values(x_col).copy()
+    df_sorted['month_str'] = df_sorted[x_col].astype(str)
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    # Plot stacked bars
+    x_positions = range(len(df_sorted))
+    bottom = np.zeros(len(df_sorted))
+    
+    for i, col in enumerate(value_cols):
+        values = df_sorted[col].fillna(0).values
+        ax.bar(
+            x_positions,
+            values,
+            bottom=bottom,
+            label=col,
+            color=STACKED_COLORS[i % len(STACKED_COLORS)],
+            edgecolor='black',
+            linewidth=0.5
+        )
+        bottom = bottom + values
+    
+    # Add total count on top of bars
+    for i, total in enumerate(bottom):
+        if total > 0:
+            ax.text(
+                i,
+                total + max(bottom) * 0.02,
+                f'{int(total):,}',
+                ha='center',
+                va='bottom',
+                fontsize=8,
+                fontweight='bold',
+                color='black'
+            )
+    
+    # Set axis labels and title
+    ax.set_ylabel(y_label)
+    ax.set_xlabel('Month')
+    ax.set_title(title, fontsize=14, fontweight='bold', pad=12)
+    
+    # Set x-axis ticks
+    ax.set_xticks(x_positions)
+    ax.set_xticklabels(df_sorted['month_str'], rotation=45, ha='right')
+    
+    # Add legend
+    ax.legend(title=legend_title, bbox_to_anchor=(1.02, 1), loc='upper left', fontsize=9)
+    
+    # Tight layout
+    fig.tight_layout()
+    
+    return fig
+
+
+# =============================================================================
+# HELPER FUNCTION: Create histogram chart
+# =============================================================================
+
+def create_histogram_chart(
+    df,
+    x_col,
+    y_col,
+    title,
+    x_label,
+    y_label,
+    figsize=(12, 6)
+):
+    """Create a histogram/bar chart for distribution data."""
+    
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    bars = ax.bar(
+        df[x_col], 
+        df[y_col], 
+        color=COLOR_NON_CURRENT, 
+        edgecolor='black',
+        linewidth=0.5
+    )
+    
+    # Add value labels
+    for bar in bars:
+        height = bar.get_height()
+        if height > 0:
+            ax.annotate(
+                f'{int(height):,}',
+                xy=(bar.get_x() + bar.get_width() / 2, height),
+                xytext=(0, 3),
+                textcoords="offset points",
+                ha='center', va='bottom', fontsize=9
+            )
+    
+    ax.set_xlabel(x_label, fontsize=12)
+    ax.set_ylabel(y_label, fontsize=12)
+    ax.set_title(title, fontsize=14, fontweight='bold')
+    plt.xticks(rotation=45, ha='right')
+    plt.tight_layout()
+    
+    return fig
+
+
+# =============================================================================
+# STEP 1: DATA PREPARATION
+# =============================================================================
+
+def prepare_data(df_final):
+    """Prepare data for charting and export."""
+    
+    # Ensure column names are lowercase
+    df_final.columns = [col.lower() for col in df_final.columns]
+    
+    # Filter to closed accounts only for time-based metrics
+    df_closed = df_final[df_final['is_still_open'] == 'N'].copy()
+    
+    # Apply outlier cap (≤200 days) for days_in_impound
+    df_closed_capped = df_closed[
+        (df_closed['days_in_impound'].isna()) | 
+        (df_closed['days_in_impound'] <= MAX_DAYS)
+    ].copy()
+    
+    # --- Monthly Volume (all instances) - filtered to visual range ---
+    df_visual = filter_to_visual_range(df_final)
+    monthly_volume = df_visual.groupby('first_impound_month').agg(
+        instance_count=('loan_sid', 'count')
+    ).reset_index()
+    monthly_volume = monthly_volume.sort_values('first_impound_month')
+    
+    # --- Monthly N55 Count (first occurrence) - filtered to visual range ---
+    df_n55 = df_visual[df_visual['first_day_n55'].notna()].copy()
+    df_n55['n55_month'] = pd.to_datetime(df_n55['first_day_n55']).dt.to_period('M').astype(str)
+    n55_monthly = df_n55.groupby('n55_month').agg(
+        n55_count=('loan_sid', 'count')
+    ).reset_index()
+    n55_monthly = n55_monthly.rename(columns={'n55_month': 'month'})
+    n55_monthly = n55_monthly.sort_values('month')
+    
+    # --- Time Metrics (closed only, capped, visual range) ---
+    df_closed_visual = filter_to_visual_range(df_closed_capped)
+    
+    # Days-to-first-occurrence metrics (only accounts with that milestone)
+    days_to_metrics = {}
+    for code in ['n53', 'n54', 'n55', 'n56', 'n57', 'n58', 'n60', 'n11', 'n12']:
+        col_name = f'days_to_{code}'
+        df_with_code = df_closed_visual[df_closed_visual[col_name].notna()].copy()
+        if len(df_with_code) > 0:
+            metric_df = df_with_code.groupby('first_impound_month').agg(
+                avg_days=(col_name, 'mean'),
+                count=('loan_sid', 'count')
+            ).reset_index()
+            metric_df = metric_df.sort_values('first_impound_month')
+            days_to_metrics[code] = metric_df
+        else:
+            days_to_metrics[code] = pd.DataFrame(columns=['first_impound_month', 'avg_days', 'count'])
+    
+    # Valid days to N11 (impound-related assignment only)
+    df_valid_n11 = df_closed_visual[df_closed_visual['valid_days_to_n11'].notna()].copy()
+    if len(df_valid_n11) > 0:
+        valid_days_to_n11_metrics = df_valid_n11.groupby('first_impound_month').agg(
+            avg_days=('valid_days_to_n11', 'mean'),
+            count=('loan_sid', 'count')
+        ).reset_index()
+        valid_days_to_n11_metrics = valid_days_to_n11_metrics.sort_values('first_impound_month')
+    else:
+        valid_days_to_n11_metrics = pd.DataFrame(columns=['first_impound_month', 'avg_days', 'count'])
+    
+    # Total days in status metrics (only accounts with that code)
+    total_days_metrics = {}
+    for code in ['n53', 'n54', 'n55', 'n56', 'n57', 'n58', 'n60', 'n11', 'n12']:
+        col_name = f'total_days_in_{code}'
+        df_with_code = df_closed_visual[df_closed_visual[col_name] > 0].copy()
+        if len(df_with_code) > 0:
+            metric_df = df_with_code.groupby('first_impound_month').agg(
+                avg_days=(col_name, 'mean'),
+                count=('loan_sid', 'count')
+            ).reset_index()
+            metric_df = metric_df.sort_values('first_impound_month')
+            total_days_metrics[code] = metric_df
+        else:
+            total_days_metrics[code] = pd.DataFrame(columns=['first_impound_month', 'avg_days', 'count'])
+    
+    # Valid total days in N11 (from N56 onwards only)
+    df_valid_total_n11 = df_closed_visual[df_closed_visual['valid_total_days_in_n11'] > 0].copy()
+    if len(df_valid_total_n11) > 0:
+        valid_total_days_n11_metrics = df_valid_total_n11.groupby('first_impound_month').agg(
+            avg_days=('valid_total_days_in_n11', 'mean'),
+            count=('loan_sid', 'count')
+        ).reset_index()
+        valid_total_days_n11_metrics = valid_total_days_n11_metrics.sort_values('first_impound_month')
+    else:
+        valid_total_days_n11_metrics = pd.DataFrame(columns=['first_impound_month', 'avg_days', 'count'])
+    
+    # Stage-to-stage metrics (only accounts with both milestones)
+    stage_to_stage_metrics = {}
+    
+    # N53 to N56
+    df_n53_n56 = df_closed_visual[df_closed_visual['days_n53_to_n56'].notna()].copy()
+    if len(df_n53_n56) > 0:
+        metric_df = df_n53_n56.groupby('first_impound_month').agg(
+            avg_days=('days_n53_to_n56', 'mean'),
+            count=('loan_sid', 'count')
+        ).reset_index()
+        stage_to_stage_metrics['n53_to_n56'] = metric_df.sort_values('first_impound_month')
+    else:
+        stage_to_stage_metrics['n53_to_n56'] = pd.DataFrame(columns=['first_impound_month', 'avg_days', 'count'])
+    
+    # N56 to N11
+    df_n56_n11 = df_closed_visual[df_closed_visual['days_n56_to_n11'].notna()].copy()
+    if len(df_n56_n11) > 0:
+        metric_df = df_n56_n11.groupby('first_impound_month').agg(
+            avg_days=('days_n56_to_n11', 'mean'),
+            count=('loan_sid', 'count')
+        ).reset_index()
+        stage_to_stage_metrics['n56_to_n11'] = metric_df.sort_values('first_impound_month')
+    else:
+        stage_to_stage_metrics['n56_to_n11'] = pd.DataFrame(columns=['first_impound_month', 'avg_days', 'count'])
+    
+    # N11 to N12
+    df_n11_n12 = df_closed_visual[df_closed_visual['days_n11_to_n12'].notna()].copy()
+    if len(df_n11_n12) > 0:
+        metric_df = df_n11_n12.groupby('first_impound_month').agg(
+            avg_days=('days_n11_to_n12', 'mean'),
+            count=('loan_sid', 'count')
+        ).reset_index()
+        stage_to_stage_metrics['n11_to_n12'] = metric_df.sort_values('first_impound_month')
+    else:
+        stage_to_stage_metrics['n11_to_n12'] = pd.DataFrame(columns=['first_impound_month', 'avg_days', 'count'])
+    
+    # Valid N56 to N11 (impound-related assignment only)
+    df_valid_n56_n11 = df_closed_visual[df_closed_visual['valid_days_n56_to_n11'].notna()].copy()
+    if len(df_valid_n56_n11) > 0:
+        metric_df = df_valid_n56_n11.groupby('first_impound_month').agg(
+            avg_days=('valid_days_n56_to_n11', 'mean'),
+            count=('loan_sid', 'count')
+        ).reset_index()
+        stage_to_stage_metrics['valid_n56_to_n11'] = metric_df.sort_values('first_impound_month')
+    else:
+        stage_to_stage_metrics['valid_n56_to_n11'] = pd.DataFrame(columns=['first_impound_month', 'avg_days', 'count'])
+    
+    # Days in impound (overall)
+    days_in_impound_metrics = df_closed_visual.groupby('first_impound_month').agg(
+        avg_days=('days_in_impound', 'mean'),
+        count=('loan_sid', 'count')
+    ).reset_index()
+    days_in_impound_metrics = days_in_impound_metrics.sort_values('first_impound_month')
+    
+    # --- Outcome Distribution by Month ---
+    outcome_monthly = df_visual.groupby(['first_impound_month', 'outcome_type']).size().unstack(fill_value=0)
+    outcome_monthly = outcome_monthly.reset_index()
+    outcome_monthly = outcome_monthly.sort_values('first_impound_month')
+    
+    # --- Entry Code Distribution by Month ---
+    df_entry = df_visual.copy()
+    df_entry['entry_code'] = df_entry['entry_code'].fillna('Unknown')
+    entry_code_monthly = df_entry.groupby(['first_impound_month', 'entry_code']).size().unstack(fill_value=0)
+    entry_code_monthly = entry_code_monthly.reset_index()
     entry_code_monthly = entry_code_monthly.sort_values('first_impound_month')
-```
-
-**NEW (insert this):**
-```python
+    
     # --- N50 vs N52 Distribution by Month (for correlation analysis) ---
     df_n50_n52 = df_visual[df_visual['entry_code'].isin(['N50', 'N52'])].copy()
     n50_n52_monthly = df_n50_n52.groupby(['first_impound_month', 'entry_code']).size().unstack(fill_value=0)
     n50_n52_monthly = n50_n52_monthly.reset_index()
     n50_n52_monthly = n50_n52_monthly.sort_values('first_impound_month')
-```
-
-**AFTER (keep this):**
-```python
+    
     # --- N55 Distribution (Histogram Data) ---
-```
-
----
-
-## Change 9: Add n50_n52_monthly to return dictionary (impound_charts_and_export.py)
-
-**BEFORE (keep this):**
-```python
+    n55_data = df_closed['total_days_in_n55'].dropna()
+    n55_data = n55_data[n55_data > 0]  # Only accounts that had N55
+    if len(n55_data) > 0:
+        max_n55 = max(n55_data.max(), 101)
+        n55_bins = [0, 1, 6, 11, 16, 21, 31, 51, 101, max_n55 + 1]
+        n55_labels = ['0', '1-5', '6-10', '11-15', '16-20', '21-30', '31-50', '51-100', '100+']
+        n55_distribution = pd.cut(n55_data, bins=n55_bins, labels=n55_labels, right=False).value_counts().sort_index()
+        n55_distribution_df = n55_distribution.reset_index()
+        n55_distribution_df.columns = ['days_range', 'count']
+    else:
+        n55_distribution_df = pd.DataFrame({'days_range': [], 'count': []})
+    
+    # --- Data Quality Summary ---
+    validation_flags = ['flag_n12_without_n11', 'flag_n53_before_entry', 'flag_n56_before_n53',
+                        'flag_n11_before_n56', 'flag_n12_before_n11', 'flag_n12_before_n56']
+    data_quality_summary = {}
+    for flag in validation_flags:
+        if flag in df_final.columns:
+            data_quality_summary[flag] = (df_final[flag] == 'Y').sum()
+        else:
+            data_quality_summary[flag] = 0
+    data_quality_df = pd.DataFrame([
+        {'flag_name': k, 'count_flagged': v} 
+        for k, v in data_quality_summary.items()
+    ])
+    
+    return {
+        'monthly_volume': monthly_volume,
+        'n55_monthly': n55_monthly,
+        'days_to_metrics': days_to_metrics,
+        'valid_days_to_n11_metrics': valid_days_to_n11_metrics,
+        'total_days_metrics': total_days_metrics,
+        'valid_total_days_n11_metrics': valid_total_days_n11_metrics,
+        'stage_to_stage_metrics': stage_to_stage_metrics,
+        'days_in_impound_metrics': days_in_impound_metrics,
+        'outcome_monthly': outcome_monthly,
         'entry_code_monthly': entry_code_monthly,
-```
-
-**NEW (insert this):**
-```python
         'n50_n52_monthly': n50_n52_monthly,
-```
-
-**AFTER (keep this):**
-```python
         'n55_distribution': n55_distribution_df,
-```
+        'data_quality': data_quality_df,
+        'df_final': df_final,
+        'df_closed_capped': df_closed_capped
+    }
 
----
 
-## Change 10: Create N50 vs N52 chart (impound_charts_and_export.py)
+# =============================================================================
+# STEP 2: CREATE ALL CHARTS
+# =============================================================================
 
-**BEFORE (keep this):**
-```python
-    print("Chart 4/26: Entry Code Distribution - Complete")
-```
-
-**NEW (insert this):**
-```python
-    # Chart 4b: N50 vs N52 Distribution
+def create_all_charts(data_dict, output_path):
+    """Create all charts and save to temp directory."""
+    
+    # Create temp directory for chart images
+    temp_chart_dir = os.path.join(output_path, 'temp_charts')
+    os.makedirs(temp_chart_dir, exist_ok=True)
+    
+    chart_paths = {}
+    chart_num = 1
+    
+    print("Creating charts...")
+    print("=" * 60)
+    
+    # =========================================================================
+    # VOLUME & DISTRIBUTION CHARTS
+    # =========================================================================
+    
+    # Chart 1: Monthly Impound Volume
+    if len(data_dict['monthly_volume']) > 0:
+        fig = create_bar_chart_with_averages(
+            df=data_dict['monthly_volume'],
+            x_col='first_impound_month',
+            y_col='instance_count',
+            title='Monthly Impound Volume (New Instances)',
+            y_label='Number of Instances'
+        )
+        chart_paths['monthly_volume'] = os.path.join(temp_chart_dir, 'chart_monthly_volume.png')
+        fig.savefig(chart_paths['monthly_volume'], dpi=150, bbox_inches='tight')
+        plt.close(fig)
+    print(f"Chart {chart_num}: Monthly Volume - Complete")
+    chart_num += 1
+    
+    # Chart 2: Monthly N55 Count
+    if len(data_dict['n55_monthly']) > 0:
+        fig = create_bar_chart_with_averages(
+            df=data_dict['n55_monthly'],
+            x_col='month',
+            y_col='n55_count',
+            title='Monthly New N55 Count (First N55 Occurrence)',
+            y_label='Number of Instances'
+        )
+        chart_paths['n55_monthly'] = os.path.join(temp_chart_dir, 'chart_n55_monthly.png')
+        fig.savefig(chart_paths['n55_monthly'], dpi=150, bbox_inches='tight')
+        plt.close(fig)
+    print(f"Chart {chart_num}: Monthly N55 Count - Complete")
+    chart_num += 1
+    
+    # Chart 3: Outcome Distribution
+    if len(data_dict['outcome_monthly']) > 0:
+        outcome_cols = [col for col in data_dict['outcome_monthly'].columns if col != 'first_impound_month']
+        fig = create_stacked_bar_chart(
+            df=data_dict['outcome_monthly'],
+            x_col='first_impound_month',
+            value_cols=outcome_cols,
+            title='Outcome Distribution by Month',
+            y_label='Number of Instances',
+            legend_title='Outcome Type'
+        )
+        chart_paths['outcome_distribution'] = os.path.join(temp_chart_dir, 'chart_outcome_distribution.png')
+        fig.savefig(chart_paths['outcome_distribution'], dpi=150, bbox_inches='tight')
+        plt.close(fig)
+    print(f"Chart {chart_num}: Outcome Distribution - Complete")
+    chart_num += 1
+    
+    # Chart 4: Entry Code Distribution
+    if len(data_dict['entry_code_monthly']) > 0:
+        entry_cols = [col for col in data_dict['entry_code_monthly'].columns if col != 'first_impound_month']
+        fig = create_stacked_bar_chart(
+            df=data_dict['entry_code_monthly'],
+            x_col='first_impound_month',
+            value_cols=entry_cols,
+            title='Entry Code Distribution by Month',
+            y_label='Number of Instances',
+            legend_title='Entry Code'
+        )
+        chart_paths['entry_code_distribution'] = os.path.join(temp_chart_dir, 'chart_entry_code_distribution.png')
+        fig.savefig(chart_paths['entry_code_distribution'], dpi=150, bbox_inches='tight')
+        plt.close(fig)
+    print(f"Chart {chart_num}: Entry Code Distribution - Complete")
+    chart_num += 1
+    
+    # Chart 5: N50 vs N52 Distribution
     if len(data_dict['n50_n52_monthly']) > 0:
         n50_n52_cols = [col for col in data_dict['n50_n52_monthly'].columns if col != 'first_impound_month']
         fig = create_stacked_bar_chart(
@@ -82,61 +613,189 @@ Here are the changes:
         chart_paths['n50_n52_distribution'] = os.path.join(temp_chart_dir, 'chart_n50_n52_distribution.png')
         fig.savefig(chart_paths['n50_n52_distribution'], dpi=150, bbox_inches='tight')
         plt.close(fig)
-    print("Chart 4b: N50 vs N52 Distribution - Complete")
-```
+    print(f"Chart {chart_num}: N50 vs N52 Distribution - Complete")
+    chart_num += 1
+    
+    # Chart 6: N55 Days Distribution Histogram
+    if len(data_dict['n55_distribution']) > 0:
+        fig = create_histogram_chart(
+            df=data_dict['n55_distribution'],
+            x_col='days_range',
+            y_col='count',
+            title='Distribution of Total Days in N55 (Ineligible Status)',
+            x_label='Days in N55',
+            y_label='Number of Instances'
+        )
+        chart_paths['n55_histogram'] = os.path.join(temp_chart_dir, 'chart_n55_histogram.png')
+        fig.savefig(chart_paths['n55_histogram'], dpi=150, bbox_inches='tight')
+        plt.close(fig)
+    print(f"Chart {chart_num}: N55 Distribution Histogram - Complete")
+    chart_num += 1
+    
+    # =========================================================================
+    # DAYS-TO-FIRST-OCCURRENCE CHARTS
+    # =========================================================================
+    
+    code_names = {
+        'n53': 'Waiting Repo Assignment (N53)',
+        'n54': 'Repo Eligibility Determination (N54)',
+        'n55': 'Less Than 30 DPD (N55)',
+        'n56': 'Vendor Assigned (N56)',
+        'n57': 'Impound Eligibility Review (N57)',
+        'n58': 'Impounds Priority (N58)',
+        'n60': 'Legal Action Request (N60)',
+        'n11': 'Repo Assigned (N11)',
+        'n12': 'Vehicle Recovered (N12)'
+    }
+    
+    for code in ['n53', 'n54', 'n55', 'n56', 'n57', 'n58', 'n60', 'n11', 'n12']:
+        df_metric = data_dict['days_to_metrics'].get(code, pd.DataFrame())
+        if len(df_metric) > 0:
+            fig = create_bar_chart_with_averages(
+                df=df_metric,
+                x_col='first_impound_month',
+                y_col='avg_days',
+                title=f'Avg Days from Entry to {code_names[code]}',
+                y_label='Average Days',
+                show_count=True,
+                count_col='count'
+            )
+            chart_paths[f'days_to_{code}'] = os.path.join(temp_chart_dir, f'chart_days_to_{code}.png')
+            fig.savefig(chart_paths[f'days_to_{code}'], dpi=150, bbox_inches='tight')
+            plt.close(fig)
+        print(f"Chart {chart_num}: Days to {code.upper()} - Complete")
+        chart_num += 1
+    
+    # Chart: Valid Days to N11 (impound-related assignment)
+    df_valid_n11 = data_dict['valid_days_to_n11_metrics']
+    if len(df_valid_n11) > 0:
+        fig = create_bar_chart_with_averages(
+            df=df_valid_n11,
+            x_col='first_impound_month',
+            y_col='avg_days',
+            title='Avg Days from Entry to Valid Repo Assignment (Impound-Related N11)',
+            y_label='Average Days',
+            show_count=True,
+            count_col='count'
+        )
+        chart_paths['valid_days_to_n11'] = os.path.join(temp_chart_dir, 'chart_valid_days_to_n11.png')
+        fig.savefig(chart_paths['valid_days_to_n11'], dpi=150, bbox_inches='tight')
+        plt.close(fig)
+    print(f"Chart {chart_num}: Valid Days to N11 - Complete")
+    chart_num += 1
+    
+    # =========================================================================
+    # TOTAL DAYS IN STATUS CHARTS
+    # =========================================================================
+    
+    for code in ['n53', 'n54', 'n55', 'n56', 'n57', 'n58', 'n60', 'n11', 'n12']:
+        df_metric = data_dict['total_days_metrics'].get(code, pd.DataFrame())
+        if len(df_metric) > 0:
+            fig = create_bar_chart_with_averages(
+                df=df_metric,
+                x_col='first_impound_month',
+                y_col='avg_days',
+                title=f'Avg Total Days in {code_names[code]}',
+                y_label='Average Days',
+                show_count=True,
+                count_col='count'
+            )
+            chart_paths[f'total_days_{code}'] = os.path.join(temp_chart_dir, f'chart_total_days_{code}.png')
+            fig.savefig(chart_paths[f'total_days_{code}'], dpi=150, bbox_inches='tight')
+            plt.close(fig)
+        print(f"Chart {chart_num}: Total Days in {code.upper()} - Complete")
+        chart_num += 1
+    
+    # Chart: Valid Total Days in N11 (from N56 onwards)
+    df_valid_total_n11 = data_dict['valid_total_days_n11_metrics']
+    if len(df_valid_total_n11) > 0:
+        fig = create_bar_chart_with_averages(
+            df=df_valid_total_n11,
+            x_col='first_impound_month',
+            y_col='avg_days',
+            title='Avg Valid Total Days in N11 (From N56 Onwards)',
+            y_label='Average Days',
+            show_count=True,
+            count_col='count'
+        )
+        chart_paths['valid_total_days_n11'] = os.path.join(temp_chart_dir, 'chart_valid_total_days_n11.png')
+        fig.savefig(chart_paths['valid_total_days_n11'], dpi=150, bbox_inches='tight')
+        plt.close(fig)
+    print(f"Chart {chart_num}: Valid Total Days in N11 - Complete")
+    chart_num += 1
+    
+    # =========================================================================
+    # STAGE-TO-STAGE CHARTS
+    # =========================================================================
+    
+    stage_names = {
+        'n53_to_n56': 'N53 (Queue) → N56 (Vendor Assigned)',
+        'n56_to_n11': 'N56 (Vendor Assigned) → N11 (Repo Assigned)',
+        'n11_to_n12': 'N11 (Repo Assigned) → N12 (Recovered)',
+        'valid_n56_to_n11': 'Valid N56 → N11 (Impound-Related Assignment)'
+    }
+    
+    for stage_key in ['n53_to_n56', 'n56_to_n11', 'n11_to_n12', 'valid_n56_to_n11']:
+        df_metric = data_dict['stage_to_stage_metrics'].get(stage_key, pd.DataFrame())
+        if len(df_metric) > 0:
+            fig = create_bar_chart_with_averages(
+                df=df_metric,
+                x_col='first_impound_month',
+                y_col='avg_days',
+                title=f'Avg Days: {stage_names[stage_key]}',
+                y_label='Average Days',
+                show_count=True,
+                count_col='count'
+            )
+            chart_paths[f'stage_{stage_key}'] = os.path.join(temp_chart_dir, f'chart_stage_{stage_key}.png')
+            fig.savefig(chart_paths[f'stage_{stage_key}'], dpi=150, bbox_inches='tight')
+            plt.close(fig)
+        print(f"Chart {chart_num}: Stage {stage_key} - Complete")
+        chart_num += 1
+    
+    print("=" * 60)
+    print("All charts created successfully.")
+    
+    return chart_paths
 
-**AFTER (keep this):**
-```python
-    # Chart 5: N55 Days Distribution Histogram
-```
 
----
+# =============================================================================
+# STEP 3: CREATE EXCEL WORKBOOK
+# =============================================================================
 
-## Change 11: Add N50 vs N52 chart to Excel (impound_charts_and_export.py)
-
-**BEFORE (keep this):**
-```python
-    for chart_name in ['monthly_volume', 'n55_monthly', 'outcome_distribution', 'entry_code_distribution', 'n55_histogram']:
-```
-
-**REPLACE WITH:**
-```python
-    for chart_name in ['monthly_volume', 'n55_monthly', 'outcome_distribution', 'entry_code_distribution', 'n50_n52_distribution', 'n55_histogram']:
-```
-
-**AFTER (keep this):**
-```python
-        if chart_name in chart_paths:
-```
-
----
-
-## Change 12: Add outcome reference table to Excel (impound_charts_and_export.py)
-
-This change adds a reference table showing the outcome distribution counts by month.
-
-**BEFORE (keep this):**
-```python
-    print("Tab 2: Volume & Distribution - Complete")
-```
-
-**FIND THIS SECTION (right before the above line):**
-```python
-    for chart_name in ['monthly_volume', 'n55_monthly', 'outcome_distribution', 'entry_code_distribution', 'n50_n52_distribution', 'n55_histogram']:
-        if chart_name in chart_paths:
-            try:
-                img = Image(chart_paths[chart_name])
-                img.width = 750
-                img.height = 375
-                ws_volume.add_image(img, f'E{row_pos}')
-                row_pos += 22
-            except Exception as e:
-                print(f"Warning: Could not add {chart_name} chart: {e}")
-    print("Tab 2: Volume & Distribution - Complete")
-```
-
-**REPLACE WITH:**
-```python
+def create_excel_workbook(data_dict, chart_paths, output_path):
+    """Create Excel workbook with data and embedded charts."""
+    
+    wb = Workbook()
+    df_final = data_dict['df_final']
+    
+    print("\nCreating Excel workbook...")
+    print("=" * 60)
+    
+    # --- Tab 1: Raw Data ---
+    ws_raw = wb.active
+    ws_raw.title = "Raw Data"
+    for r_idx, row in enumerate(dataframe_to_rows(df_final, index=False, header=True), 1):
+        for c_idx, value in enumerate(row, 1):
+            if isinstance(value, pd.Timestamp):
+                ws_raw.cell(row=r_idx, column=c_idx, value=value.strftime('%Y-%m-%d'))
+            elif pd.isna(value):
+                ws_raw.cell(row=r_idx, column=c_idx, value=None)
+            else:
+                ws_raw.cell(row=r_idx, column=c_idx, value=value)
+    print("Tab 1: Raw Data - Complete")
+    
+    # --- Tab 2: Volume & Distribution ---
+    ws_volume = wb.create_sheet(title="Volume & Distribution")
+    
+    # Add monthly volume data
+    ws_volume.cell(row=1, column=1, value="Monthly Impound Volume")
+    for r_idx, row in enumerate(dataframe_to_rows(data_dict['monthly_volume'], index=False, header=True), 2):
+        for c_idx, value in enumerate(row, 1):
+            ws_volume.cell(row=r_idx, column=c_idx, value=value)
+    
+    # Add charts
+    row_pos = 2
     for chart_name in ['monthly_volume', 'n55_monthly', 'outcome_distribution', 'entry_code_distribution', 'n50_n52_distribution', 'n55_histogram']:
         if chart_name in chart_paths:
             try:
@@ -163,9 +822,231 @@ This change adds a reference table showing the outcome distribution counts by mo
             ws_volume.cell(row=r_idx, column=c_idx, value=value)
     
     print("Tab 2: Volume & Distribution - Complete")
-```
-
-**AFTER (keep this):**
-```python
+    
     # --- Tab 3: Days to Milestone ---
-```
+    ws_days_to = wb.create_sheet(title="Days to Milestone")
+    
+    # Add summary data
+    ws_days_to.cell(row=1, column=1, value="Days to First Occurrence (from Entry)")
+    current_row = 3
+    for code in ['n53', 'n54', 'n55', 'n56', 'n57', 'n58', 'n60', 'n11', 'n12']:
+        df_metric = data_dict['days_to_metrics'].get(code, pd.DataFrame())
+        if len(df_metric) > 0:
+            ws_days_to.cell(row=current_row, column=1, value=f"Days to {code.upper()}")
+            current_row += 1
+            for r_idx, row in enumerate(dataframe_to_rows(df_metric, index=False, header=True), current_row):
+                for c_idx, value in enumerate(row, 1):
+                    if pd.isna(value):
+                        ws_days_to.cell(row=r_idx, column=c_idx, value=None)
+                    else:
+                        ws_days_to.cell(row=r_idx, column=c_idx, value=value)
+            current_row += len(df_metric) + 3
+    
+    # Add Valid Days to N11 data
+    df_valid_n11 = data_dict['valid_days_to_n11_metrics']
+    if len(df_valid_n11) > 0:
+        ws_days_to.cell(row=current_row, column=1, value="Valid Days to N11 (Impound-Related)")
+        current_row += 1
+        for r_idx, row in enumerate(dataframe_to_rows(df_valid_n11, index=False, header=True), current_row):
+            for c_idx, value in enumerate(row, 1):
+                if pd.isna(value):
+                    ws_days_to.cell(row=r_idx, column=c_idx, value=None)
+                else:
+                    ws_days_to.cell(row=r_idx, column=c_idx, value=value)
+    
+    # Add charts
+    row_pos = 2
+    for code in ['n53', 'n54', 'n55', 'n56', 'n57', 'n58', 'n60', 'n11', 'n12']:
+        chart_key = f'days_to_{code}'
+        if chart_key in chart_paths:
+            try:
+                img = Image(chart_paths[chart_key])
+                img.width = 750
+                img.height = 375
+                ws_days_to.add_image(img, f'F{row_pos}')
+                row_pos += 22
+            except Exception as e:
+                print(f"Warning: Could not add {chart_key} chart: {e}")
+    
+    # Add Valid Days to N11 chart
+    if 'valid_days_to_n11' in chart_paths:
+        try:
+            img = Image(chart_paths['valid_days_to_n11'])
+            img.width = 750
+            img.height = 375
+            ws_days_to.add_image(img, f'F{row_pos}')
+            row_pos += 22
+        except Exception as e:
+            print(f"Warning: Could not add valid_days_to_n11 chart: {e}")
+    
+    print("Tab 3: Days to Milestone - Complete")
+    
+    # --- Tab 4: Days in Status ---
+    ws_days_in = wb.create_sheet(title="Days in Status")
+    
+    # Add summary data
+    ws_days_in.cell(row=1, column=1, value="Total Days in Each Status")
+    current_row = 3
+    for code in ['n53', 'n54', 'n55', 'n56', 'n57', 'n58', 'n60', 'n11', 'n12']:
+        df_metric = data_dict['total_days_metrics'].get(code, pd.DataFrame())
+        if len(df_metric) > 0:
+            ws_days_in.cell(row=current_row, column=1, value=f"Days in {code.upper()}")
+            current_row += 1
+            for r_idx, row in enumerate(dataframe_to_rows(df_metric, index=False, header=True), current_row):
+                for c_idx, value in enumerate(row, 1):
+                    if pd.isna(value):
+                        ws_days_in.cell(row=r_idx, column=c_idx, value=None)
+                    else:
+                        ws_days_in.cell(row=r_idx, column=c_idx, value=value)
+            current_row += len(df_metric) + 3
+    
+    # Add Valid Total Days in N11 data
+    df_valid_total_n11 = data_dict['valid_total_days_n11_metrics']
+    if len(df_valid_total_n11) > 0:
+        ws_days_in.cell(row=current_row, column=1, value="Valid Total Days in N11 (From N56 Onwards)")
+        current_row += 1
+        for r_idx, row in enumerate(dataframe_to_rows(df_valid_total_n11, index=False, header=True), current_row):
+            for c_idx, value in enumerate(row, 1):
+                if pd.isna(value):
+                    ws_days_in.cell(row=r_idx, column=c_idx, value=None)
+                else:
+                    ws_days_in.cell(row=r_idx, column=c_idx, value=value)
+    
+    # Add charts
+    row_pos = 2
+    for code in ['n53', 'n54', 'n55', 'n56', 'n57', 'n58', 'n60', 'n11', 'n12']:
+        chart_key = f'total_days_{code}'
+        if chart_key in chart_paths:
+            try:
+                img = Image(chart_paths[chart_key])
+                img.width = 750
+                img.height = 375
+                ws_days_in.add_image(img, f'F{row_pos}')
+                row_pos += 22
+            except Exception as e:
+                print(f"Warning: Could not add {chart_key} chart: {e}")
+    
+    # Add Valid Total Days in N11 chart
+    if 'valid_total_days_n11' in chart_paths:
+        try:
+            img = Image(chart_paths['valid_total_days_n11'])
+            img.width = 750
+            img.height = 375
+            ws_days_in.add_image(img, f'F{row_pos}')
+            row_pos += 22
+        except Exception as e:
+            print(f"Warning: Could not add valid_total_days_n11 chart: {e}")
+    
+    print("Tab 4: Days in Status - Complete")
+    
+    # --- Tab 5: Stage-to-Stage ---
+    ws_stage = wb.create_sheet(title="Stage-to-Stage")
+    
+    # Add summary data
+    ws_stage.cell(row=1, column=1, value="Stage-to-Stage Durations")
+    current_row = 3
+    for stage_key in ['n53_to_n56', 'n56_to_n11', 'n11_to_n12', 'valid_n56_to_n11']:
+        df_metric = data_dict['stage_to_stage_metrics'].get(stage_key, pd.DataFrame())
+        if len(df_metric) > 0:
+            ws_stage.cell(row=current_row, column=1, value=f"Days {stage_key}")
+            current_row += 1
+            for r_idx, row in enumerate(dataframe_to_rows(df_metric, index=False, header=True), current_row):
+                for c_idx, value in enumerate(row, 1):
+                    if pd.isna(value):
+                        ws_stage.cell(row=r_idx, column=c_idx, value=None)
+                    else:
+                        ws_stage.cell(row=r_idx, column=c_idx, value=value)
+            current_row += len(df_metric) + 3
+    
+    # Add charts
+    row_pos = 2
+    for stage_key in ['n53_to_n56', 'n56_to_n11', 'n11_to_n12', 'valid_n56_to_n11']:
+        chart_key = f'stage_{stage_key}'
+        if chart_key in chart_paths:
+            try:
+                img = Image(chart_paths[chart_key])
+                img.width = 750
+                img.height = 375
+                ws_stage.add_image(img, f'F{row_pos}')
+                row_pos += 22
+            except Exception as e:
+                print(f"Warning: Could not add {chart_key} chart: {e}")
+    
+    print("Tab 5: Stage-to-Stage - Complete")
+    
+    # --- Tab 6: Data Quality ---
+    ws_quality = wb.create_sheet(title="Data Quality")
+    
+    ws_quality.cell(row=1, column=1, value="Data Validation Flag Summary")
+    for r_idx, row in enumerate(dataframe_to_rows(data_dict['data_quality'], index=False, header=True), 3):
+        for c_idx, value in enumerate(row, 1):
+            ws_quality.cell(row=r_idx, column=c_idx, value=value)
+    
+    # Add explanation
+    ws_quality.cell(row=12, column=1, value="Flag Definitions:")
+    flag_definitions = [
+        ("flag_n12_without_n11", "N12 (Recovered) exists but N11 (Repo Assigned) does not - ERROR"),
+        ("flag_n53_before_entry", "N53 appeared before impound entry date - ERROR"),
+        ("flag_n56_before_n53", "N56 (Vendor Assigned) appeared before N53 (Queue) - OUT OF SEQUENCE"),
+        ("flag_n11_before_n56", "N11 (Repo Assigned) appeared before N56 (Vendor Assigned) - OUT OF SEQUENCE"),
+        ("flag_n12_before_n11", "N12 (Recovered) appeared before N11 (Repo Assigned) - OUT OF SEQUENCE"),
+        ("flag_n12_before_n56", "N12 (Recovered) appeared before N56 (Vendor Assigned) - OUT OF SEQUENCE"),
+    ]
+    for i, (flag, desc) in enumerate(flag_definitions, 14):
+        ws_quality.cell(row=i, column=1, value=flag)
+        ws_quality.cell(row=i, column=2, value=desc)
+    print("Tab 6: Data Quality - Complete")
+    
+    # Save workbook
+    full_path = os.path.join(output_path, f"impound_analysis_{DATE_STAMP}.xlsx")
+    wb.save(full_path)
+    
+    print("=" * 60)
+    print(f"Excel file saved successfully!")
+    print(f"Path: {full_path}")
+    print("=" * 60)
+    
+    return full_path
+
+
+# =============================================================================
+# MAIN EXECUTION
+# =============================================================================
+
+def run_analysis(df_final, output_path=OUTPUT_PATH):
+    """
+    Main function to run the complete analysis.
+    
+    Parameters:
+    -----------
+    df_final : DataFrame from impound_lifecycle_query
+    output_path : Directory path for output files
+    """
+    
+    print("=" * 60)
+    print("IMPOUND LIFECYCLE ANALYSIS - EXPORT")
+    print("=" * 60)
+    print(f"Start Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Output Path: {output_path}")
+    print("=" * 60)
+    
+    # Step 1: Prepare data
+    print("\nStep 1: Preparing data...")
+    data_dict = prepare_data(df_final)
+    print(f"  - Total instances: {len(data_dict['df_final']):,}")
+    print(f"  - Closed instances: {len(data_dict['df_closed_capped']):,}")
+    
+    # Step 2: Create charts
+    print("\nStep 2: Creating charts...")
+    chart_paths = create_all_charts(data_dict, output_path)
+    
+    # Step 3: Create Excel workbook
+    print("\nStep 3: Creating Excel workbook...")
+    excel_path = create_excel_workbook(data_dict, chart_paths, output_path)
+    
+    print("\n" + "=" * 60)
+    print("ANALYSIS COMPLETE")
+    print(f"End Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("=" * 60)
+    
+    return excel_path
